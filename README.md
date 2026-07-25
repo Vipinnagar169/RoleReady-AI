@@ -5,7 +5,7 @@
 ![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
 
 **RoleReady AI** is an advanced, full-stack AI-powered Career & Interview Preparation SaaS platform engineered with a sleek Dark Mode + Glassmorphism UI aesthetic. It empowers job seekers and engineers to benchmark their job readiness, conduct interactive voice mock interviews, optimize ATS resumes in real time, and extract semantic skill gaps using Retrieval Augmented Generation (RAG).
-
+ 
 ---
 
 ## 🌟 Key Features

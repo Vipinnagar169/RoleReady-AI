@@ -6,7 +6,6 @@ import Home from "./features/interview/pages/Home";
 import Interview from "./features/interview/pages/Interview";
 import AnalyticsDashboard from "./features/dashboard/pages/AnalyticsDashboard";
 import VoiceInterviewRoom from "./features/voice/pages/VoiceInterviewRoom";
-import LiveResumeBuilder from "./features/resume/pages/LiveResumeBuilder";
 
 export const router = createBrowserRouter([
     {
@@ -32,9 +31,5 @@ export const router = createBrowserRouter([
     {
         path: "/voice-interview",
         element: <Protected><VoiceInterviewRoom /></Protected>
-    },
-    {
-        path: "/resume-builder",
-        element: <Protected><LiveResumeBuilder /></Protected>
     }
 ])

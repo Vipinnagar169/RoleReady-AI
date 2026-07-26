@@ -17,5 +17,6 @@ voiceRouter.post("/start", authMiddleware.authUser, startVoiceSessionController)
  * @access Private
  */
 voiceRouter.post("/turn", authMiddleware.authUser, evaluateVoiceTurnController)
+voiceRouter.post("/answer", authMiddleware.authUser, evaluateVoiceTurnController)
 
 module.exports = voiceRouter

@@ -21,12 +21,12 @@ ChartJS.register(
 
 const SkillRadarChart = ({ scores }) => {
     const defaultScores = {
-        technical: 85,
-        softSkills: 78,
-        problemSolving: 90,
-        systemDesign: 72,
-        experienceMatch: 88,
-        domainKnowledge: 80
+        technical: 75,
+        softSkills: 68,
+        problemSolving: 80,
+        systemDesign: 62,
+        experienceMatch: 72,
+        domainKnowledge: 70
     }
 
     const dataScores = scores || defaultScores
@@ -63,18 +63,28 @@ const SkillRadarChart = ({ scores }) => {
     }
 
     const options = {
+        layout: {
+            padding: {
+                top: 20,
+                bottom: 20,
+                left: 40,
+                right: 40
+            }
+        },
         scales: {
             r: {
                 angleLines: { color: 'rgba(255, 255, 255, 0.1)' },
                 grid: { color: 'rgba(255, 255, 255, 0.1)' },
                 pointLabels: {
-                    color: '#94a3b8',
-                    font: { size: 12, weight: 'bold' }
+                    color: '#cbd5e1',
+                    font: { size: 11, weight: '600', family: "'Inter', sans-serif" },
+                    padding: 12
                 },
                 ticks: {
                     color: '#64748b',
                     backdropColor: 'transparent',
-                    stepSize: 20
+                    stepSize: 20,
+                    font: { size: 10 }
                 },
                 min: 0,
                 max: 100
@@ -82,14 +92,23 @@ const SkillRadarChart = ({ scores }) => {
         },
         plugins: {
             legend: {
-                labels: { color: '#f8fafc', font: { size: 13 } }
+                labels: {
+                    color: '#f8fafc',
+                    font: { size: 12 },
+                    boxWidth: 14
+                }
+            },
+            tooltip: {
+                callbacks: {
+                    label: (ctx) => ` ${ctx.dataset.label}: ${ctx.raw}%`
+                }
             }
         },
         maintainAspectRatio: false
     }
 
     return (
-        <div style={{ width: '100%', height: '350px' }}>
+        <div style={{ width: '100%', height: '360px', position: 'relative' }}>
             <Radar data={data} options={options} />
         </div>
     )

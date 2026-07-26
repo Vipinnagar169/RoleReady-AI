@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react'
 import "../style/home.scss"
 import { useInterview } from '../hooks/useInterview.js'
+import { useAuth } from '../../auth/hooks/useAuth.js'
 import { useNavigate } from 'react-router'
 import axios from 'axios'
 import ProductionLoader from '../../../components/ProductionLoader.jsx'
@@ -13,6 +14,7 @@ const api = axios.create({
 const Home = () => {
 
     const { loading, generateReport, reports } = useInterview()
+    const { user, handleLogout } = useAuth()
     const [ jobDescription, setJobDescription ] = useState("")
     const [ selfDescription, setSelfDescription ] = useState("")
     const [ jobUrl, setJobUrl ] = useState("")
@@ -23,6 +25,11 @@ const Home = () => {
 
     const resumeInputRef = useRef()
     const navigate = useNavigate()
+
+    const onLogout = async () => {
+        await handleLogout()
+        navigate('/login')
+    }
 
     const handleFileChange = (e) => {
         const file = e.target.files[ 0 ]
@@ -71,29 +78,107 @@ const Home = () => {
     return (
         <div className='home-page'>
 
-            {/* Top Navigation Bar for SaaS Modules */}
+            {/* Top SaaS Header Navbar */}
             <nav style={{
+                width: '100%',
+                maxWidth: '900px',
+                background: 'rgba(22, 27, 34, 0.8)',
+                backdropFilter: 'blur(16px)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                borderRadius: '16px',
+                padding: '0.8rem 1.4rem',
                 display: 'flex',
-                justify: 'center',
-                gap: '1rem',
-                flexWrap: 'wrap',
-                margin: '1.5rem 0'
+                alignItems: 'center',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.3)',
+                margin: '0.5rem 0 1.5rem 0'
             }}>
-                <button onClick={() => navigate('/voice-interview')} className='generate-btn' style={{ background: 'rgba(99, 102, 241, 0.2)', border: '1px solid #6366f1' }}>
-                    🎙️ AI Voice Interviewer
-                </button>
-                <button onClick={() => navigate('/resume-builder')} className='generate-btn' style={{ background: 'rgba(52, 211, 153, 0.2)', border: '1px solid #34d399' }}>
-                    📄 Live ATS Resume Builder
-                </button>
-                <button onClick={() => navigate('/dashboard')} className='generate-btn' style={{ background: 'rgba(244, 63, 94, 0.2)', border: '1px solid #f43f5e' }}>
-                    📊 Analytics Dashboard
-                </button>
+                {/* Left: SaaS Module Navigation */}
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <button
+                        onClick={() => navigate('/voice-interview')}
+                        className='generate-btn'
+                        style={{
+                            background: 'rgba(99, 102, 241, 0.15)',
+                            border: '1px solid rgba(99, 102, 241, 0.4)',
+                            color: '#818cf8',
+                            fontSize: '0.85rem',
+                            padding: '0.55rem 1.1rem',
+                            borderRadius: '10px'
+                        }}
+                    >
+                        🎙️ Voice Mock Interview
+                    </button>
+
+                    <button
+                        onClick={() => navigate('/dashboard')}
+                        className='generate-btn'
+                        style={{
+                            background: 'rgba(244, 63, 94, 0.15)',
+                            border: '1px solid rgba(244, 63, 94, 0.4)',
+                            color: '#fb7185',
+                            fontSize: '0.85rem',
+                            padding: '0.55rem 1.1rem',
+                            borderRadius: '10px'
+                        }}
+                    >
+                        📊 Analytics Dashboard
+                    </button>
+                </div>
+
+                {/* Right: User Profile Chip & Logout (pushed to far right via marginLeft: auto) */}
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.75rem',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        padding: '0.5rem 1.1rem',
+                        borderRadius: '10px',
+                        border: '1px solid rgba(255, 255, 255, 0.1)'
+                    }}>
+                        <div style={{
+                            width: '28px',
+                            height: '28px',
+                            borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '0.8rem',
+                            fontWeight: 'bold',
+                            color: '#fff'
+                        }}>
+                            {(user?.username || user?.email || 'U')[0].toUpperCase()}
+                        </div>
+                        <span style={{ color: '#e6edf3', fontSize: '0.9rem', fontWeight: '500', letterSpacing: '0.3px' }}>
+                            {user?.username || user?.email || 'Candidate'}
+                        </span>
+                    </div>
+
+                    <button
+                        onClick={onLogout}
+                        title="Logout of account"
+                        style={{
+                            background: 'rgba(239, 68, 68, 0.15)',
+                            border: '1px solid rgba(239, 68, 68, 0.4)',
+                            color: '#f87171',
+                            padding: '0.5rem 1.1rem',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            fontSize: '0.85rem',
+                            fontWeight: '600',
+                            transition: 'all 0.2s'
+                        }}
+                    >
+                        🚪 Logout
+                    </button>
+                </div>
             </nav>
 
             {/* Page Header */}
             <header className='page-header'>
                 <h1>RoleReady AI <span className='highlight'>Career SaaS Platform</span></h1>
-                <p>AI-powered Job Description analysis, ATS resume tailoring, voice mock interviews & semantic skill gap RAG engine.</p>
+                <p>AI-powered Job Description analysis, voice mock interviews &amp; semantic skill gap RAG engine.</p>
             </header>
 
             {/* Main Card */}

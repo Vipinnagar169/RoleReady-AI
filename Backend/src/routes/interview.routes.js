@@ -37,6 +37,18 @@ interviewRouter.get("/", authMiddleware.authUser, interviewController.getAllInte
  */
 interviewRouter.post("/resume/pdf/:interviewReportId", authMiddleware.authUser, interviewController.generateResumePdfController)
 
+/**
+ * @route POST /api/interview/resume/builder-pdf
+ * @description generate direct ATS resume pdf from builder inputs.
+ * @access private
+ */
+interviewRouter.post("/resume/builder-pdf", authMiddleware.authUser, upload.single("resume"), interviewController.generateDirectResumePdfController)
 
+/**
+ * @route POST /api/interview/resume/parse-pdf
+ * @description parse uploaded PDF resume and extract structured fields for Live Resume Builder.
+ * @access private
+ */
+interviewRouter.post("/resume/parse-pdf", authMiddleware.authUser, upload.single("resume"), interviewController.parseResumePdfController)
 
 module.exports = interviewRouter

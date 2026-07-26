@@ -1,76 +1,107 @@
-const { GoogleGenAI } = require("@google/genai")
-const { z } = require("zod")
-const { zodToJsonSchema } = require("zod-to-json-schema")
+const Groq = require("groq-sdk")
 const puppeteer = require("puppeteer")
-
-const ai = new GoogleGenAI({
-    apiKey: process.env.GOOGLE_GENAI_API_KEY
-})
-
-
-const interviewReportSchema = z.object({
-    matchScore: z.number().describe("A score between 0 and 100 indicating how well the candidate's profile matches the job describe"),
-    technicalQuestions: z.array(z.object({
-        question: z.string().describe("The technical question can be asked in the interview"),
-        intention: z.string().describe("The intention of interviewer behind asking this question"),
-        answer: z.string().describe("How to answer this question, what points to cover, what approach to take etc.")
-    })).describe("Technical questions that can be asked in the interview along with their intention and how to answer them"),
-    behavioralQuestions: z.array(z.object({
-        question: z.string().describe("The technical question can be asked in the interview"),
-        intention: z.string().describe("The intention of interviewer behind asking this question"),
-        answer: z.string().describe("How to answer this question, what points to cover, what approach to take etc.")
-    })).describe("Behavioral questions that can be asked in the interview along with their intention and how to answer them"),
-    skillGaps: z.array(z.object({
-        skill: z.string().describe("The skill which the candidate is lacking"),
-        severity: z.enum([ "low", "medium", "high" ]).describe("The severity of this skill gap, i.e. how important is this skill for the job and how much it can impact the candidate's chances")
-    })).describe("List of skill gaps in the candidate's profile along with their severity"),
-    preparationPlan: z.array(z.object({
-        day: z.number().describe("The day number in the preparation plan, starting from 1"),
-        focus: z.string().describe("The main focus of this day in the preparation plan, e.g. data structures, system design, mock interviews etc."),
-        tasks: z.array(z.string()).describe("List of tasks to be done on this day to follow the preparation plan, e.g. read a specific book or article, solve a set of problems, watch a video etc.")
-    })).describe("A day-wise preparation plan for the candidate to follow in order to prepare for the interview effectively"),
-    title: z.string().describe("The title of the job for which the interview report is generated"),
-})
-
 const { buildRagContext } = require("./rag.service")
+const { buildResumeHtml } = require("./resumeTemplate")
+
+// Load all 3 Groq keys for rotation
+const GROQ_KEYS = [
+    process.env.GROQ_API_KEY_1,
+    process.env.GROQ_API_KEY_2,
+    process.env.GROQ_API_KEY_3,
+].filter(k => k && k.trim() !== "")
+
+if (GROQ_KEYS.length === 0) {
+    throw new Error("No Groq API keys found! Add GROQ_API_KEY_1 to .env")
+}
+
+console.log(`[AI] Loaded ${GROQ_KEYS.length} Groq API key(s)`)
+
+let currentKeyIndex = 0
+
+// Best model → fallback chain
+const MODELS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "mixtral-8x7b-32768",
+]
+
+/**
+ * Try all keys × all models until one succeeds — JSON mode ON (for structured outputs)
+ */
+async function generateWithFallback(prompt) {
+    for (const model of MODELS) {
+        for (let attempt = 0; attempt < GROQ_KEYS.length; attempt++) {
+            const keyIdx = (currentKeyIndex + attempt) % GROQ_KEYS.length
+            const groq = new Groq({ apiKey: GROQ_KEYS[keyIdx] })
+
+            try {
+                const completion = await groq.chat.completions.create({
+                    model,
+                    messages: [{ role: "user", content: prompt }],
+                    temperature: 0.7,
+                    max_tokens: 4096,
+                    response_format: { type: "json_object" },
+                })
+                const text = completion.choices[0]?.message?.content
+                console.log(`[AI] Success — Key #${keyIdx + 1}, Model: ${model}`)
+                currentKeyIndex = (keyIdx + 1) % GROQ_KEYS.length
+                return text
+            } catch (err) {
+                const status = err?.status || err?.code
+                console.warn(`[AI] Key #${keyIdx + 1} / ${model} failed (${status}): ${err?.message?.substring(0, 80)}`)
+                // On rate limit (429) → try next key, otherwise break to next model
+                if (status !== 429 && status !== 503) break
+            }
+        }
+    }
+    throw new Error("All Groq keys and models exhausted. Try again later.")
+}
+
 
 async function generateInterviewReport({ resume, selfDescription, jobDescription }) {
     const ragData = buildRagContext({ resume, selfDescription, jobDescription })
 
     const prompt = `You are a Senior Technical Recruiter and Hiring Manager. Analyze candidate background against target job requirements.
 
-IMPORTANT INSTRUCTION FOR MINIMAL/SHORT INPUTS:
-Even if the job description or candidate profile is short or minimal (e.g. just a title like "senior software engineer" or brief self-description), infer standard industry expectations for that position. Generate a complete, highly valuable interview report with realistic match scores (e.g. 50-80%), targeted technical & behavioral questions, identified skill gaps, and a 7-day preparation roadmap.
+IMPORTANT: Even if the job description or candidate profile is short or minimal, infer standard industry expectations. Generate a complete, valuable interview report with:
+- A REALISTIC match score that TRULY reflects how well the candidate's actual skills/experience match the job requirements. DO NOT always use 72. Calculate honestly: 40-55 for weak match, 56-70 for partial match, 71-84 for strong match, 85-95 for excellent match.
+- Targeted technical & behavioral questions specific to this candidate and role.
+- Real skill gaps identified from comparing resume to job requirements.
+- A 7-day preparation roadmap.
 
 Candidate Profile:
-- Resume Content: ${resume || "Not provided"}
+- Resume: ${resume || "Not provided"}
 - Self Description: ${selfDescription || "Not provided"}
 
 Job Description / Target Role:
 ${jobDescription || "Software Engineer"}
 
-Semantic RAG Analysis:
-- Strong Skill Matches Found in Profile:
-${ragData.matchedContext || "Infer standard industry baseline"}
+RAG Analysis:
+- Skill Matches: ${ragData.matchedContext || "Infer standard industry baseline"}
+- Skill Gaps: ${ragData.gapContext || "Infer standard skill gaps for role"}
 
-- Potential Skill Gaps / Missing Requirements:
-${ragData.gapContext || "Infer standard skill gaps for role"}
+Return ONLY a valid JSON object with this exact structure (replace all example values with REAL analysis):
+{
+  "title": "actual job title from description",
+  "matchScore": <calculate this as an integer 40-95 based on actual candidate-job fit — NOT always 72>,
+  "technicalQuestions": [
+    { "question": "...", "intention": "...", "answer": "..." }
+  ],
+  "behavioralQuestions": [
+    { "question": "...", "intention": "...", "answer": "..." }
+  ],
+  "skillGaps": [
+    { "skill": "...", "severity": "low" }
+  ],
+  "preparationPlan": [
+    { "day": 1, "focus": "...", "tasks": ["...", "..."] }
+  ]
+}`
 
-Generate an accurate, structured interview report adhering strictly to the JSON schema.
-`
-
-    const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: prompt,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: zodToJsonSchema(interviewReportSchema),
-        }
-    })
-
-    return JSON.parse(response.text)
+    const text = await generateWithFallback(prompt)
+    return JSON.parse(text)
 }
-
 
 
 async function generatePdfFromHtml(htmlContent) {
@@ -78,58 +109,157 @@ async function generatePdfFromHtml(htmlContent) {
         headless: true,
         args: ["--no-sandbox", "--disable-setuid-sandbox"]
     })
-    const page = await browser.newPage();
+    const page = await browser.newPage()
     await page.setContent(htmlContent, { waitUntil: "networkidle0" })
-
     const pdfBuffer = await page.pdf({
-        format: "A4", margin: {
-            top: "20mm",
-            bottom: "20mm",
-            left: "15mm",
-            right: "15mm"
-        }
+        format: "A4",
+        margin: { top: "20mm", bottom: "20mm", left: "15mm", right: "15mm" }
     })
-
     await browser.close()
-
     return pdfBuffer
 }
 
-async function generateResumePdf({ resume, selfDescription, jobDescription }) {
+async function generateResumePdf({ resume, selfDescription, jobDescription, userName, userEmail }) {
+    const fallbackName = userName || "Vipin Nagar"
+    const fallbackEmail = userEmail || "vipin.nagar@example.com"
 
-    const resumePdfSchema = z.object({
-        html: z.string().describe("The HTML content of the resume which can be converted to PDF using any library like puppeteer")
-    })
+    const prompt = `You are an expert ATS resume writer and parser. Your primary task is to EXTRACT all candidate details directly from the provided Resume Content and Self Description to generate a rich, complete 1-page professional resume.
 
-    const prompt = `Generate resume for a candidate with the following details:
-                        Resume: ${resume}
-                        Self Description: ${selfDescription}
-                        Job Description: ${jobDescription}
+CRITICAL INSTRUCTIONS FOR EXTRACTION & GENERATION:
+1. FULL NAME: Extract the candidate's real full name from the Resume Content or Self Description text. If none found, use "${fallbackName}".
+2. CONTACT INFO: Extract Email (or "${fallbackEmail}"), Phone (+91-9876543210), City/Location ("Jodhpur, Rajasthan"), LinkedIn, and GitHub links.
+3. TECHNICAL SKILLS: You MUST categorize ALL candidate skills into these 5 keys (DO NOT OMIT Programming Languages!):
+   - "Programming Languages": [list ALL languages like C++, Java, Python, JavaScript, TypeScript, HTML/CSS, SQL found or relevant]
+   - "Frameworks & Web Tech": [React, Node.js, Express, Next.js, Redux, Tailwind, etc.]
+   - "Databases": [MongoDB, PostgreSQL, MySQL, Redis, Firebase, etc.]
+   - "Tools & Platforms": [Git, GitHub, Docker, Postman, VS Code, Linux, AWS, Vercel, etc.]
+   - "Core Subjects": [Data Structures & Algorithms, OOPs, DBMS, Operating Systems, Computer Networks, Software Engineering]
+4. PROJECTS & INTERNSHIPS: For each project or internship, write 2 to 3 detailed, high-impact bullet points specifying technologies used, feature implementation, and quantified outcomes (% performance, automation, user scalability).
+5. CERTIFICATIONS & ACHIEVEMENTS: Include all real certifications and achievements found in the resume.
 
-                        the response should be a JSON object with a single field "html" which contains the HTML content of the resume which can be converted to PDF using any library like puppeteer.
-                        The resume should be tailored for the given job description and should highlight the candidate's strengths and relevant experience. The HTML content should be well-formatted and structured, making it easy to read and visually appealing.
-                        The content of resume should be not sound like it's generated by AI and should be as close as possible to a real human-written resume.
-                        you can highlight the content using some colors or different font styles but the overall design should be simple and professional.
-                        The content should be ATS friendly, i.e. it should be easily parsable by ATS systems without losing important information.
-                        The resume should not be so lengthy, it should ideally be 1-2 pages long when converted to PDF. Focus on quality rather than quantity and make sure to include all the relevant information that can increase the candidate's chances of getting an interview call for the given job description.
-                    `
+Candidate Raw Data:
+--- RESUME CONTENT ---
+${resume || "Not provided"}
 
-    const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: prompt,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: zodToJsonSchema(resumePdfSchema),
+--- SELF DESCRIPTION ---
+${selfDescription || "Not provided"}
+
+--- TARGET JOB ---
+${jobDescription || "Software Engineer"}
+
+Return ONLY a valid JSON object matching this structure:
+{
+  "fullName": "Extract real candidate full name",
+  "city": "Location",
+  "phone": "Phone number",
+  "email": "Email address",
+  "linkedin": "LinkedIn URL",
+  "github": "GitHub URL",
+  "careerObjective": "A strong, tailored 3-sentence professional objective for target role",
+  "education": [
+    {
+      "degree": "B.E. / B.Tech / Degree",
+      "specialization": "Information Technology / Computer Science",
+      "institution": "University / College Name",
+      "cgpa": "CGPA / Percentage",
+      "year": "Final Year / Duration"
+    }
+  ],
+  "technicalSkills": {
+    "Programming Languages": ["C++", "JavaScript", "Python"],
+    "Frameworks & Web Tech": ["React", "Node.js", "Express"],
+    "Databases": ["MongoDB"],
+    "Tools & Platforms": ["Git", "GitHub", "Docker", "VS Code"],
+    "Core Subjects": ["Data Structures", "Algorithms", "OOPs", "DBMS", "Operating Systems", "Computer Networks"]
+  },
+  "projects": [
+    {
+      "title": "Project Name — Tech Stack",
+      "duration": "Duration / Year",
+      "bullets": [
+        "Detailed bullet point describing system architecture and core feature implementation.",
+        "Detailed bullet point highlighting performance optimization and user experience."
+      ]
+    }
+  ],
+  "internships": [
+    {
+      "role": "Role Title",
+      "company": "Company Name",
+      "duration": "Duration / Year",
+      "bullets": [
+        "Key technical achievement or contribution during internship."
+      ]
+    }
+  ],
+  "certifications": [
+    "Certification Title — Issuing Body"
+  ],
+  "achievements": [
+    "Key academic or hackathon achievement"
+  ]
+}`
+
+    const text = await generateWithFallback(prompt)
+    let resumeData = {}
+    try {
+        resumeData = JSON.parse(text)
+    } catch (e) {
+        console.error("Resume JSON parse error:", e)
+    }
+
+    resumeData.userName = fallbackName
+    resumeData.userEmail = fallbackEmail
+
+    const htmlContent = buildResumeHtml(resumeData)
+    return await generatePdfFromHtml(htmlContent)
+}
+
+async function parseResumePdfText(rawText) {
+    // Use a dedicated call WITHOUT json_object mode so the model can write
+    // long text in experience/skills without being cut short
+    const prompt = `You are an expert resume parser. Extract ALL information from the following raw resume text into a structured JSON format.
+
+CRITICAL: Do NOT truncate, shorten, or omit any details. Extract every project, internship, certification, and achievement in full.
+
+Raw Resume Text:
+${rawText}
+
+Return ONLY a valid JSON object with these EXACT keys:
+{
+  "fullName": "Real candidate full name from resume",
+  "jobTitle": "Target or current job title inferred from resume",
+  "summary": "Complete career objective or professional summary text from resume (full paragraph, nothing shortened)",
+  "skills": "Comprehensive comma-separated list of ALL: programming languages, frameworks, libraries, databases, tools, platforms, and core CS subjects found in resume",
+  "experience": "Multi-line text with ALL projects, internships, work experience, certifications, and achievements. Format each entry as:\\n\\nTitle | Company/Role | Duration\\n- Bullet point 1\\n- Bullet point 2\\n\\nInclude ALL entries from the resume without skipping any."
+}`
+
+    // Manual Groq call - no json_object mode, high token limit
+    for (const model of MODELS) {
+        for (let i = 0; i < GROQ_KEYS.length; i++) {
+            const keyIdx = (currentKeyIndex + i) % GROQ_KEYS.length
+            const groq = new Groq({ apiKey: GROQ_KEYS[keyIdx] })
+            try {
+                const completion = await groq.chat.completions.create({
+                    model,
+                    messages: [{ role: "user", content: prompt }],
+                    temperature: 0.2,
+                    max_tokens: 4096,
+                })
+                currentKeyIndex = (keyIdx + 1) % GROQ_KEYS.length
+                const text = completion.choices[0]?.message?.content?.trim()
+
+                // Extract JSON from response (handles cases where model adds extra text)
+                const jsonMatch = text.match(/\{[\s\S]*\}/)
+                if (jsonMatch) return JSON.parse(jsonMatch[0])
+                return JSON.parse(text)
+            } catch (err) {
+                console.warn(`[ParseResume] ${model} key #${keyIdx + 1} failed:`, err?.message?.substring(0, 60))
+                if (err?.status !== 429 && err?.status !== 503) break
+            }
         }
-    })
-
-
-    const jsonContent = JSON.parse(response.text)
-
-    const pdfBuffer = await generatePdfFromHtml(jsonContent.html)
-
-    return pdfBuffer
-
+    }
+    throw new Error("Failed to parse resume PDF text using Groq.")
 }
 
-module.exports = { generateInterviewReport, generateResumePdf }
+module.exports = { generateInterviewReport, generateResumePdf, parseResumePdfText }

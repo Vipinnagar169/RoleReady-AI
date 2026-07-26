@@ -1,13 +1,36 @@
 const axios = require("axios")
 const cheerio = require("cheerio")
-const { GoogleGenAI } = require("@google/genai")
+const Groq = require("groq-sdk")
 
-const ai = new GoogleGenAI({
-    apiKey: process.env.GOOGLE_GENAI_API_KEY
-})
+const GROQ_KEYS = [
+    process.env.GROQ_API_KEY_1,
+    process.env.GROQ_API_KEY_2,
+    process.env.GROQ_API_KEY_3,
+].filter(k => k && k.trim() !== "")
+
+let currentKeyIndex = 0
+
+async function callGroq(prompt) {
+    for (let i = 0; i < GROQ_KEYS.length; i++) {
+        const keyIdx = (currentKeyIndex + i) % GROQ_KEYS.length
+        const groq = new Groq({ apiKey: GROQ_KEYS[keyIdx] })
+        try {
+            const completion = await groq.chat.completions.create({
+                model: "llama-3.3-70b-versatile",
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0.3,
+            })
+            currentKeyIndex = (keyIdx + 1) % GROQ_KEYS.length
+            return completion.choices[0]?.message?.content?.trim()
+        } catch (err) {
+            if (err?.status !== 429 && err?.status !== 503) throw err
+        }
+    }
+    throw new Error("All Groq keys exhausted in urlFetcher service.")
+}
 
 /**
- * Scrapes clean text from a job posting URL and uses Gemini to extract structured Job Description.
+ * Scrapes clean text from a job posting URL and uses Groq to extract structured Job Description.
  */
 async function extractJdFromUrl(url) {
     try {
@@ -15,7 +38,7 @@ async function extractJdFromUrl(url) {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
-            timeout: 10000
+            timeout: 12000
         })
 
         const $ = cheerio.load(response.data)
@@ -29,19 +52,13 @@ async function extractJdFromUrl(url) {
             throw new Error("Could not extract sufficient text content from URL.")
         }
 
-        const prompt = `Extract the complete Job Title and Job Description (including requirements, key responsibilities, and qualifications) from the following raw web page content.
-Filter out website navigation or headers and return clean job details in formatted text.
+        const prompt = `Extract the complete Job Title and Job Description (requirements, key responsibilities, qualifications, and skills needed) from the following raw web page content.
+Filter out navigation menus, headers, footers, and ads. Return only clean, well-formatted job details.
 
 Raw Page Content:
-${rawText}
-`
+${rawText}`
 
-        const aiResponse = await ai.models.generateContent({
-            model: "gemini-1.5-flash",
-            contents: prompt
-        })
-
-        return aiResponse.text.trim()
+        return await callGroq(prompt)
     } catch (error) {
         console.error("Error fetching job URL:", error.message)
         throw new Error(error.message || "Failed to fetch or parse Job Description from URL.")
